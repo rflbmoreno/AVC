@@ -1,0 +1,772 @@
+# Baixando e tratando dados
+
+install.packages("tidyverse")
+
+library("tidyverse")
+
+avc <- read.csv(file.choose())
+View(avc)
+
+names(avc)
+
+avc <- avc %>% mutate(id = as.character(id),
+                      gender = as.factor(gender),
+                      ever_married = as.factor(ever_married),
+                      work_type = as.factor(work_type),
+                      Residence_type = as.factor(Residence_type),
+                      smoking_status = as.factor(smoking_status),
+                      gender = recode(gender,
+                                      "Male" = "homem",
+                                      "Female" = "mulher"),
+                      ever_married = recode(ever_married,
+                                            "Yes" = "sim",
+                                            "No" = "nao"),
+                      work_type = recode(work_type,
+                                         "Private" = "privado",
+                                         "Self-employed" = "autonomo",
+                                         "Govt_job" = "publico",
+                                         "Never_worked" = "desocupado",
+                                         "children" = "nao_ativo"),
+                      Residence_type = recode(Residence_type,
+                                              "Urban" = "urbano",
+                                              "Rural" = "rural"),
+                      smoking_status = recode(smoking_status,
+                                              "never smoked" = "nao_fumante",
+                                              "formerly smoked" = "ex_fumante",
+                                              "smokes" = "fumante")) %>% 
+  rename(genero = gender,
+         idade = age,
+         hipertensao = hypertension,
+         doenca_cardiaca = heart_disease,
+         casou = ever_married,
+         tipo_trabalho = work_type,
+         tipo_residencia = Residence_type,
+         acucar = avg_glucose_level,
+         massa_corporal = bmi,
+         status_fumante = smoking_status,
+         avc = stroke)
+
+avc <- avc[avc$genero != "Other",]
+avc <- avc[avc$status_fumante != "Unknown",]
+
+avc <- avc[avc$massa_corporal != "N/A",]
+avc$massa_corporal <- as.numeric(avc$massa_corporal)
+
+summary(avc)
+names(avc)
+
+################################################################################
+
+# Instalando pacotes
+
+pacotes <- c("plotly", "tidyverse", "ggrepel", "fastDummies", "knitr",
+             "kableExtra", "splines", "reshape2", "PerformanceAnalytics",
+             "metan", "correlation", "see", "ggraph", "nortest", "rgl", "car",
+             "olsrr", "jtools", "ggstance", "magick", "cowplot", "beepr",
+             "Rcpp", "MASS", "cluster", "dendextend", "factoextra", "fpc",
+             "gridExtra", "readxl", "rayshader", "psych", "pracma", "polynom",
+             "rqPen", "sjPlot", "FactoMineR", "cabootcrs", "lmtest", "caret",
+             "pROC", "ROCR", "nnet", "questionr", "pscl", "overdisp", "nlme",
+             "msm", "lmeInfo", "datasets", "forecast", "fpp2", "tseries",
+             "patchwork", "DataCombine", "TTR", "dplyr", "prophet", "lme4")
+
+if(sum(as.numeric(!pacotes %in% installed.packages())) != 0){
+  instalador <- pacotes[!pacotes %in% installed.packages()]
+  for(i in 1:length(instalador)) {
+    install.packages(instalador, dependencies = T)
+    break()}
+  sapply(pacotes, require, character = T) 
+} else {
+  sapply(pacotes, require, character = T) 
+}
+
+################################################################################
+# Existem 5 variáveis qualitativas para um modelo multinível
+
+# Modelo logístico multinível 1: variável "genero"
+
+# Análise Fatorial
+
+avc_modelo1 <- avc %>% dummy_columns(select_columns = c("casou",
+                                                        "tipo_trabalho",
+                                                        "tipo_residencia",
+                                                        "status_fumante"),
+                                     remove_selected_columns = T,
+                                     remove_most_frequent_dummy = T)
+
+View(avc_modelo1)
+
+matriz_correlacao1 <- cor(avc_modelo1[, 3:16])
+
+cortest.bartlett(matriz_correlacao1)
+
+fatorial1 <- prcomp(avc_modelo1[, 3:16])
+summary(fatorial1)
+
+options(scipen = 999)
+
+scores1 <- t(fatorial1$rotation) / fatorial1$sdev
+scores1
+
+f1 <- c()
+f2 <- c()
+
+fatores1 <- list(f1, f2)
+
+for(i in 1:2){
+  for(j in 1:dim(avc_modelo1)[1]){
+    fatores1[[i]][j] <- sum(scores1[i, ] * avc_modelo1[j, 3:16])
+  }
+}
+
+avc_modelo1 <- data.frame(F1 = fatores1[[1]],
+                          F2 = fatores1[[2]],
+                          genero = avc$genero,
+                          avc = avc_modelo1$avc)
+
+View(avc_modelo1)
+
+# Modelo nulo: estatisticamente relevante
+
+modelo_nulo1 <- glmer(formula = avc ~ 1 + (1 | genero),
+                      family = binomial(link = "logit"),
+                      data = avc_modelo1)
+
+summary(modelo_nulo1)
+
+# Verificação da variação de intercepto:
+
+modelo_intercepto1 <- glmer(formula = avc ~ F1 + F2 + (1 | genero),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo1)
+
+summary(modelo_intercepto1)
+
+# Verificação da variação de inclinacao:
+
+modelo_inclinacao1 <- glmer(formula = avc ~ 1 + (F1 + F2 | genero),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo1)
+
+summary(modelo_inclinacao1)
+
+# Modelo completo:
+
+modelo1 <- glmer(formula = avc ~ F1 + F2 + (F1 + F2 | genero),
+                 family = binomial(link = "logit"),
+                 data = avc_modelo1)
+
+summary(modelo1)
+
+# Visualização
+
+ggplotly(
+  avc_modelo1 %>% 
+    ggplot() +
+    geom_point(aes(x = F1,
+                   y = avc,
+                   color = genero),
+               size = 2) +
+    geom_smooth(aes(x = F1,
+                    y = avc,
+                    color = genero),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 1",
+         y = "AVC") +
+    theme_bw()
+)
+
+ggplotly(
+  avc_modelo1 %>% 
+    ggplot() +
+    geom_point(aes(x = F2,
+                   y = avc,
+                   color = genero),
+               size = 2) +
+    geom_smooth(aes(x = F2,
+                    y = avc,
+                    color = genero),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 2",
+         y = "AVC") +
+    theme_bw()
+)
+
+################################################################################
+# Existem 5 variáveis qualitativas para um modelo multinível
+
+# Modelo logístico multinível 1: variável "casou"
+
+# Análise Fatorial
+
+avc_modelo2 <- avc %>% dummy_columns(select_columns = c("genero",
+                                                        "tipo_trabalho",
+                                                        "tipo_residencia",
+                                                        "status_fumante"),
+                                     remove_selected_columns = T,
+                                     remove_most_frequent_dummy = T)
+
+View(avc_modelo2)
+
+avc_modelo2 <- avc_modelo2 %>% relocate(casou, .after = id)
+
+matriz_correlacao2 <- cor(avc_modelo2[, 3:16])
+
+cortest.bartlett(matriz_correlacao2)
+
+fatorial2 <- prcomp(avc_modelo2[, 3:16])
+summary(fatorial2)
+
+options(scipen = 999)
+
+scores2 <- t(fatorial2$rotation) / fatorial2$sdev
+scores2
+
+f1 <- c()
+f2 <- c()
+
+fatores2 <- list(f1, f2)
+
+for(i in 1:2){
+  for(j in 1:dim(avc_modelo2)[1]){
+    fatores2[[i]][j] <- sum(scores2[i, ] * avc_modelo2[j, 3:16])
+  }
+}
+
+avc_modelo2 <- data.frame(F1 = fatores2[[1]],
+                          F2 = fatores2[[2]],
+                          casou = avc$casou,
+                          avc = avc_modelo2$avc)
+
+View(avc_modelo2)
+
+# Modelo nulo: estatisticamente relevante
+
+modelo_nulo2 <- glmer(formula = avc ~ 1 + (1 | casou),
+                      family = binomial(link = "logit"),
+                      data = avc_modelo2)
+
+summary(modelo_nulo2)
+
+# Verificação da variação de intercepto:
+
+modelo_intercepto2 <- glmer(formula = avc ~ F1 + F2 + (1 | casou),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo2)
+
+summary(modelo_intercepto2)
+
+# Verificação da variação de inclinacao:
+
+modelo_inclinacao2 <- glmer(formula = avc ~ 1 + (F1 + F2 | casou),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo2)
+
+summary(modelo_inclinacao2)
+
+# Modelo completo:
+
+modelo2 <- glmer(formula = avc ~ F1 + F2 + (F1 + F2 | casou),
+                 family = binomial(link = "logit"),
+                 data = avc_modelo2)
+
+summary(modelo2)
+
+# Visualização
+
+ggplotly(
+  avc_modelo2 %>% 
+    ggplot() +
+    geom_point(aes(x = F1,
+                   y = avc,
+                   color = casou),
+               size = 2) +
+    geom_smooth(aes(x = F1,
+                    y = avc,
+                    color = casou),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 1",
+         y = "AVC") +
+    theme_bw()
+)
+
+ggplotly(
+  avc_modelo2 %>% 
+    ggplot() +
+    geom_point(aes(x = F2,
+                   y = avc,
+                   color = casou),
+               size = 2) +
+    geom_smooth(aes(x = F2,
+                    y = avc,
+                    color = casou),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 2",
+         y = "AVC") +
+    theme_bw()
+)
+
+################################################################################
+# Existem 5 variáveis qualitativas para um modelo multinível
+
+# Modelo logístico multinível 1: variável "tipo_trabalho"
+
+# Análise Fatorial
+
+avc_modelo3 <- avc %>% dummy_columns(select_columns = c("genero",
+                                                        "casou",
+                                                        "tipo_residencia",
+                                                        "status_fumante"),
+                                     remove_selected_columns = T,
+                                     remove_most_frequent_dummy = T)
+
+View(avc_modelo3)
+
+avc_modelo3 <- avc_modelo3 %>% relocate(tipo_trabalho, .after = id)
+
+matriz_correlacao3 <- cor(avc_modelo3[, 3:13])
+
+cortest.bartlett(matriz_correlacao3)
+
+fatorial3 <- prcomp(avc_modelo3[, 3:13])
+summary(fatorial3)
+
+options(scipen = 999)
+
+scores3 <- t(fatorial3$rotation) / fatorial3$sdev
+scores3
+
+f1 <- c()
+f2 <- c()
+
+fatores3 <- list(f1, f2)
+
+for(i in 1:2){
+  for(j in 1:dim(avc_modelo3)[1]){
+    fatores3[[i]][j] <- sum(scores3[i, ] * avc_modelo3[j, 3:13])
+  }
+}
+
+avc_modelo3 <- data.frame(F1 = fatores3[[1]],
+                          F2 = fatores3[[2]],
+                          tipo_trabalho = avc$tipo_trabalho,
+                          avc = avc_modelo3$avc)
+
+View(avc_modelo3)
+
+# Modelo nulo: estatisticamente relevante
+
+modelo_nulo3 <- glmer(formula = avc ~ 1 + (1 | tipo_trabalho),
+                      family = binomial(link = "logit"),
+                      data = avc_modelo3)
+
+summary(modelo_nulo3)
+
+# Verificação da variação de intercepto:
+
+modelo_intercepto3 <- glmer(formula = avc ~ F1 + F2 + (1 | tipo_trabalho),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo3)
+
+summary(modelo_intercepto3)
+
+# Verificação da variação de inclinacao:
+
+modelo_inclinacao3 <- glmer(formula = avc ~ 1 + (F1 + F2 | tipo_trabalho),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo3)
+
+summary(modelo_inclinacao3)
+
+# Modelo completo:
+
+modelo3 <- glmer(formula = avc ~ F1 + F2 + (F1 + F2 | tipo_trabalho),
+                 family = binomial(link = "logit"),
+                 data = avc_modelo3)
+
+summary(modelo3)
+
+# Visualização
+
+ggplotly(
+  avc_modelo3 %>% 
+    ggplot() +
+    geom_point(aes(x = F1,
+                   y = avc,
+                   color = tipo_trabalho),
+               size = 2) +
+    geom_smooth(aes(x = F1,
+                    y = avc,
+                    color = tipo_trabalho),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 1",
+         y = "AVC") +
+    theme_bw()
+)
+
+ggplotly(
+  avc_modelo3 %>% 
+    ggplot() +
+    geom_point(aes(x = F2,
+                   y = avc,
+                   color = tipo_trabalho),
+               size = 2) +
+    geom_smooth(aes(x = F2,
+                    y = avc,
+                    color = tipo_trabalho),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 2",
+         y = "AVC") +
+    theme_bw()
+)
+
+
+################################################################################
+# Existem 5 variáveis qualitativas para um modelo multinível
+
+# Modelo logístico multinível 1: variável "tipo_residencia"
+
+# Análise Fatorial
+
+avc_modelo4 <- avc %>% dummy_columns(select_columns = c("genero",
+                                                        "casou",
+                                                        "tipo_trabalho",
+                                                        "status_fumante"),
+                                     remove_selected_columns = T,
+                                     remove_most_frequent_dummy = T)
+
+View(avc_modelo4)
+
+avc_modelo4 <- avc_modelo4 %>% relocate(tipo_residencia, .after = id)
+
+matriz_correlacao4 <- cor(avc_modelo4[, 3:16])
+
+cortest.bartlett(matriz_correlacao4)
+
+fatorial4 <- prcomp(avc_modelo4[, 3:16])
+summary(fatorial4)
+
+options(scipen = 999)
+
+scores4 <- t(fatorial4$rotation) / fatorial4$sdev
+scores4
+
+f1 <- c()
+f2 <- c()
+
+fatores4 <- list(f1, f2)
+
+for(i in 1:2){
+  for(j in 1:dim(avc_modelo4)[1]){
+    fatores4[[i]][j] <- sum(scores4[i, ] * avc_modelo4[j, 3:16])
+  }
+}
+
+avc_modelo4 <- data.frame(F1 = fatores4[[1]],
+                          F2 = fatores4[[2]],
+                          tipo_residencia = avc$tipo_residencia,
+                          avc = avc_modelo4$avc)
+
+View(avc_modelo4)
+
+# Modelo nulo: estatisticamente relevante
+
+modelo_nulo4 <- glmer(formula = avc ~ 1 + (1 | tipo_residencia),
+                      family = binomial(link = "logit"),
+                      data = avc_modelo4)
+
+summary(modelo_nulo4)
+
+# Verificação da variação de intercepto:
+
+modelo_intercepto4 <- glmer(formula = avc ~ F1 + F2 + (1 | tipo_residencia),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo4)
+
+summary(modelo_intercepto4)
+
+# Verificação da variação de inclinacao:
+
+modelo_inclinacao4 <- glmer(formula = avc ~ 1 + (F1 + F2 | tipo_residencia),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo4)
+
+summary(modelo_inclinacao4)
+
+# Modelo completo:
+
+modelo4 <- glmer(formula = avc ~ F1 + F2 + (F1 + F2 | tipo_residencia),
+                 family = binomial(link = "logit"),
+                 data = avc_modelo4)
+
+summary(modelo4)
+
+# Visualização
+
+ggplotly(
+  avc_modelo4 %>% 
+    ggplot() +
+    geom_point(aes(x = F1,
+                   y = avc,
+                   color = tipo_residencia),
+               size = 2) +
+    geom_smooth(aes(x = F1,
+                    y = avc,
+                    color = tipo_residencia),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 1",
+         y = "AVC") +
+    theme_bw()
+)
+
+ggplotly(
+  avc_modelo4 %>% 
+    ggplot() +
+    geom_point(aes(x = F2,
+                   y = avc,
+                   color = tipo_residencia),
+               size = 2) +
+    geom_smooth(aes(x = F2,
+                    y = avc,
+                    color = tipo_residencia),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 2",
+         y = "AVC") +
+    theme_bw()
+)
+
+################################################################################
+# Existem 5 variáveis qualitativas para um modelo multinível
+
+# Modelo logístico multinível 1: variável "tipo_residencia"
+
+# Análise Fatorial
+
+avc_modelo5 <- avc %>% dummy_columns(select_columns = c("genero",
+                                                        "casou",
+                                                        "tipo_trabalho",
+                                                        "tipo_residencia"),
+                                     remove_selected_columns = T,
+                                     remove_most_frequent_dummy = T)
+
+View(avc_modelo5)
+
+avc_modelo5 <- avc_modelo5 %>% relocate(status_fumante, .after = id)
+
+matriz_correlacao5 <- cor(avc_modelo5[, 3:15])
+
+cortest.bartlett(matriz_correlacao5)
+
+fatorial5 <- prcomp(avc_modelo5[, 3:15])
+summary(fatorial5)
+
+options(scipen = 999)
+
+scores5 <- t(fatorial5$rotation) / fatorial5$sdev
+scores5
+
+f1 <- c()
+f2 <- c()
+
+fatores5 <- list(f1, f2)
+
+for(i in 1:2){
+  for(j in 1:dim(avc_modelo5)[1]){
+    fatores5[[i]][j] <- sum(scores5[i, ] * avc_modelo5[j, 3:15])
+  }
+}
+
+avc_modelo5 <- data.frame(F1 = fatores5[[1]],
+                          F2 = fatores5[[2]],
+                          status_fumante = avc$status_fumante,
+                          avc = avc_modelo5$avc)
+
+View(avc_modelo5)
+
+# Modelo nulo: estatisticamente relevante
+
+modelo_nulo5 <- glmer(formula = avc ~ 1 + (1 | status_fumante),
+                      family = binomial(link = "logit"),
+                      data = avc_modelo5)
+
+summary(modelo_nulo5)
+
+# Verificação da variação de intercepto:
+
+modelo_intercepto5 <- glmer(formula = avc ~ F1 + F2 + (1 | status_fumante),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo5)
+
+summary(modelo_intercepto5)
+
+# Verificação da variação de inclinacao:
+
+modelo_inclinacao5 <- glmer(formula = avc ~ 1 + (F1 + F2 | status_fumante),
+                            family = binomial(link = "logit"),
+                            data = avc_modelo5)
+
+summary(modelo_inclinacao5)
+
+# Modelo completo:
+
+modelo5 <- glmer(formula = avc ~ F1 + F2 + (F1 + F2 | status_fumante),
+                 family = binomial(link = "logit"),
+                 data = avc_modelo5)
+
+summary(modelo5)
+
+# Visualização
+
+ggplotly(
+  avc_modelo5 %>% 
+    ggplot() +
+    geom_point(aes(x = F1,
+                   y = avc,
+                   color = status_fumante),
+               size = 2) +
+    geom_smooth(aes(x = F1,
+                    y = avc,
+                    color = status_fumante),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 1",
+         y = "AVC") +
+    theme_bw()
+)
+
+ggplotly(
+  avc_modelo5 %>% 
+    ggplot() +
+    geom_point(aes(x = F2,
+                   y = avc,
+                   color = status_fumante),
+               size = 2) +
+    geom_smooth(aes(x = F2,
+                    y = avc,
+                    color = status_fumante),
+                size = 2,
+                method = "glm",
+                formula = y ~ x,
+                method.args = list(family = "binomial")) +
+    labs(x = "Fator 2",
+         y = "AVC") +
+    theme_bw()
+)
+
+################################################################################
+# Modelo simples:
+
+names(avc)
+
+avc_dummy <- avc %>% dummy_columns(select_columns = c("genero",
+                                                      "casou",
+                                                      "tipo_trabalho",
+                                                      "tipo_residencia",
+                                                      "status_fumante"),
+                                   remove_selected_columns = T,
+                                   remove_most_frequent_dummy = T)
+
+View(avc_dummy)
+names(avc_dummy)
+
+modelo_simples <- glm(formula = avc ~ . - id,
+                      data = avc_dummy,
+                      family = "binomial")
+
+summary(modelo_simples)
+
+################################################################################
+# Modelo simples Stepwise:
+
+modelo_step <- step(modelo_simples,
+                    k = qchisq(0.05,
+                               df = 1,
+                               lower.tail = F))
+summary(modelo_step)
+
+################################################################################
+# Comparando modelos
+
+comparacao <- data.frame(modelo = c("modelo_nulo1",
+                                    "modelo_nulo2",
+                                    "modelo_nulo3",
+                                    "modelo_nulo4",
+                                    "modelo_nulo5",
+                                    "modelo_intercepto1",
+                                    "modelo_intercepto2",
+                                    "modelo_intercepto3",
+                                    "modelo_intercepto4",
+                                    "modelo_intercepto5",
+                                    "modelo_inclinacao1",
+                                    "modelo_inclinacao2",
+                                    "modelo_inclinacao3",
+                                    "modelo_inclinacao4",
+                                    "modelo_inclinacao5",
+                                    "modelo1",
+                                    "modelo2",
+                                    "modelo3",
+                                    "modelo4",
+                                    "modelo5",
+                                    "modelo_simples",
+                                    "modelo_step"),
+                         AIC = c(extractAIC(modelo_nulo1)[2],
+                                 extractAIC(modelo_nulo2)[2],
+                                 extractAIC(modelo_nulo3)[2],
+                                 extractAIC(modelo_nulo4)[2],
+                                 extractAIC(modelo_nulo5)[2],
+                                 extractAIC(modelo_intercepto1)[2],
+                                 extractAIC(modelo_intercepto2)[2],
+                                 extractAIC(modelo_intercepto3)[2],
+                                 extractAIC(modelo_intercepto4)[2],
+                                 extractAIC(modelo_intercepto5)[2],
+                                 extractAIC(modelo_inclinacao1)[2],
+                                 extractAIC(modelo_inclinacao2)[2],
+                                 extractAIC(modelo_inclinacao3)[2],
+                                 extractAIC(modelo_inclinacao4)[2],
+                                 extractAIC(modelo_inclinacao5)[2],
+                                 extractAIC(modelo1)[2],
+                                 extractAIC(modelo2)[2],
+                                 extractAIC(modelo3)[2],
+                                 extractAIC(modelo4)[2],
+                                 extractAIC(modelo5)[2],
+                                 modelo_simples$aic,
+                                 modelo_step$aic))
+
+comparacao <- comparacao[order(comparacao$AIC, decreasing = T),]
+
+View(comparacao)
+
+# Visualizando gráfico de barras
+
+comparacao %>% 
+  ggplot(aes(x = AIC,
+             y = modelo,
+             color = modelo,
+             fill = modelo)) +
+  geom_bar(stat = "identity")
